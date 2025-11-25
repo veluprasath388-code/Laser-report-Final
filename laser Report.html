@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Laser Report v3.8</title>
+<style>
+:root{--bg:#f8fafc;--card:#ffffff;--accent:#2b8cff;--muted:#6b7280;}
+body{margin:0;font-family:Inter, system-ui, sans-serif;background:var(--bg);padding:18px;color:#111827;}
+.container{max-width:1100px;margin:0 auto;}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;}
+h1{font-size:20px;margin:0}
+.card{background:var(--card);border-radius:10px;padding:14px;box-shadow:0 6px 20px rgba(20,30,60,0.04);}
+table{width:100%;border-collapse:collapse;margin-top:6px;}
+thead th{background:#e5e7eb;font-weight:600;padding:10px 6px;border:1px solid #d1d5db;text-align:center;}
+tbody td{padding:8px 6px;text-align:center;border-bottom:1px solid #eef2ff;}
+input[type=number]{width:100%;padding:6px 8px;border-radius:6px;border:1px solid #dbeafe;text-align:center;font-size:14px;background:white;}
+.total-box{border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;padding:6px 8px;font-weight:700;min-width:54px;display:inline-block;text-align:center;}
+tfoot td{padding:10px 6px;font-weight:700;background:transparent;border-top:2px solid #f0e6b8;}
+button{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:600;}
+button.secondary{background:#efefef;color:#111;border:1px solid #e5e7eb;}
+.small{font-size:13px;padding:6px 10px}
+</style>
+</head>
+<body>
+<div class="container">
+  
+<header style="display:flex;align-items:center;justify-content:center;position:relative;"><h1 style="flex:1;text-align:center;margin:0;">Laser Hourly &amp; Final Report</h1><div style="position:absolute;right:10px;">
+    <button id="clear" class="small" style="background:#2b8cff;color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:600;">Clear</button>
+  </div>
+</header>
+
+
+  <div class="card">
+    <table id="tracker">
+      <thead>
+        <tr>
+          <th>Hour</th>
+          <th>LCM 1A/1B</th><th>LCM 2A/2B</th><th>LCM 1A/1B Total</th><th>LCM 2A/2B Total</th><th>Overall Total</th>
+        </tr>
+      </thead>
+      <tbody id="body-rows">
+        <!-- Static Hour Rows -->
+        <script>
+          for(let i=1;i<=8;i++){
+            document.write(`<tr>
+              <td>${i}</td>
+              <td><input type="text" data-row="${i}" data-col="lcm1" placeholder="e.g. 3000/400"></td>
+              <td><input type="text" data-row="${i}" data-col="lcm2" placeholder="e.g. 2800/600"></td>
+              <td><span class="total-box lcm1Total" data-row="${i}"></span></td>
+              <td><span class="total-box lcm2Total" data-row="${i}"></span></td>
+              <td><span class="total-box overall" data-row="${i}"></span></td>
+            </tr>`);
+          }
+        </script>
+      </tbody>
+      
+      <tfoot>
+        <tr>
+          <td style="text-align:center;font-weight:700">Total →</td>
+          <td></td>
+          <td></td>
+          <td><span id="sum-lcm1Total" class="total-box"></span></td>
+          <td><span id="sum-lcm2Total" class="total-box"></span></td>
+          <td><span id="sum-overall" class="total-box"></span></td>
+        </tr>
+      </tfoot>
+
+    </table>
+  </div>
+</div>
+
+
+<script>
+(function(){
+  const HOURS = 8;
+  const STORAGE_KEY = 'merged_laser_v7';
+
+  function parseAB(str){
+    if(!str) return null;
+    const parts = String(str).split('/').map(s=>s.trim());
+    if(parts.length===0) return null;
+    const a = parseFloat(parts[0]) || 0;
+    const b = parseFloat(parts[1]) || 0;
+    // if both empty strings -> null
+    if((parts[0]==='' || parts[0]===undefined) && (parts[1]===''||parts[1]===undefined)) return null;
+    return [a,b];
+  }
+
+  function findPrevNonZero(row, col){
+    for(let j=row-1;j>=1;j--){
+      const el = document.querySelector(`input[data-row="${j}"][data-col="${col}"]`);
+      if(!el) continue;
+      const val = el.value;
+      if(!val) continue;
+      const parts = String(val).split('/').map(s=>parseFloat(s)||0);
+      if(parts.length>=1 && (parts[0]!==0 || (parts.length>1 && parts[1]!==0))) return j;
+    }
+    return null;
+  }
+
+  function computeAll(){
+    let sumL1Left=0,sumL1Right=0,sumL2Left=0,sumL2Right=0,sumOverall=0;
+    for(let i=1;i<=HOURS;i++){
+      const l1El = document.querySelector(`input[data-row="${i}"][data-col="lcm1"]`);
+      const l2El = document.querySelector(`input[data-row="${i}"][data-col="lcm2"]`);
+      const l1Parsed = l1El ? parseAB(l1El.value) : null;
+      const l2Parsed = l2El ? parseAB(l2El.value) : null;
+
+      const l1TotEl = document.querySelector(`.lcm1Total[data-row="${i}"]`);
+      const l2TotEl = document.querySelector(`.lcm2Total[data-row="${i}"]`);
+      const overallEl = document.querySelector(`.overall[data-row="${i}"]`);
+
+      if(!l1Parsed && !l2Parsed){
+        if(l1TotEl) l1TotEl.textContent='';
+        if(l2TotEl) l2TotEl.textContent='';
+        if(overallEl) overallEl.textContent='';
+        continue;
+      }
+
+      let l1Left=0,l1Right=0,l2Left=0,l2Right=0;
+      if(l1Parsed){
+        if(i===1){
+          l1Left = Math.round(l1Parsed[0]/72);
+          l1Right = Math.round(l1Parsed[1]/72);
+        } else {
+          const prev = findPrevNonZero(i,'lcm1');
+          if(prev){
+            const prevEl = document.querySelector(`input[data-row="${prev}"][data-col="lcm1"]`);
+            const prevParts = parseAB(prevEl.value) || [0,0];
+            l1Left = Math.max(0, Math.round((l1Parsed[0] - prevParts[0]) / 72));
+            l1Right = Math.max(0, Math.round((l1Parsed[1] - prevParts[1]) / 72));
+          } else {
+            l1Left = Math.round(l1Parsed[0]/72);
+            l1Right = Math.round(l1Parsed[1]/72);
+          }
+        }
+      }
+      if(l2Parsed){
+        if(i===1){
+          l2Left = Math.round(l2Parsed[0]/72);
+          l2Right = Math.round(l2Parsed[1]/72);
+        } else {
+          const prev = findPrevNonZero(i,'lcm2');
+          if(prev){
+            const prevEl = document.querySelector(`input[data-row="${prev}"][data-col="lcm2"]`);
+            const prevParts = parseAB(prevEl.value) || [0,0];
+            l2Left = Math.max(0, Math.round((l2Parsed[0] - prevParts[0]) / 72));
+            l2Right = Math.max(0, Math.round((l2Parsed[1] - prevParts[1]) / 72));
+          } else {
+            l2Left = Math.round(l2Parsed[0]/72);
+            l2Right = Math.round(l2Parsed[1]/72);
+          }
+        }
+      }
+
+      const anyNonZero = (l1Left||l1Right||l2Left||l2Right);
+      if(l1TotEl) l1TotEl.textContent = (l1Parsed && anyNonZero)? `${l1Left}/${l1Right}` : (l1Parsed?`${l1Left}/${l1Right}`:'');
+      if(l2TotEl) l2TotEl.textContent = (l2Parsed && anyNonZero)? `${l2Left}/${l2Right}` : (l2Parsed?`${l2Left}/${l2Right}`:'');
+      if(overallEl) overallEl.textContent = anyNonZero ? (l1Left + l1Right + l2Left + l2Right) : '';
+
+      sumL1Left += l1Left; sumL1Right += l1Right; sumL2Left += l2Left; sumL2Right += l2Right;
+      sumOverall += (l1Left + l1Right + l2Left + l2Right);
+    }
+
+    const sumL1 = document.getElementById('sum-lcm1Total');
+    const sumL2 = document.getElementById('sum-lcm2Total');
+    const sumOv = document.getElementById('sum-overall');
+    if(sumL1) sumL1.textContent = `${sumL1Left}/${sumL1Right}`;
+    if(sumL2) sumL2.textContent = `${sumL2Left}/${sumL2Right}`;
+    if(sumOv) sumOv.textContent = sumOverall;
+
+    // save state
+    try{ saveState(); }catch(e){}
+  }
+
+  function saveState(){
+    const data = {};
+    for(let i=1;i<=HOURS;i++){
+      data[i] = {};
+      ['lcm1','lcm2'].forEach(col=>{
+        const el = document.querySelector(`input[data-row="${i}"][data-col="${col}"]`);
+        data[i][col] = el ? el.value : '';
+      });
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  function restoreState(){
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return;
+    try{
+      const data = JSON.parse(raw);
+      for(let i=1;i<=HOURS;i++){
+        ['lcm1','lcm2'].forEach(col=>{
+          const el = document.querySelector(`input[data-row="${i}"][data-col="${col}"]`);
+          if(el) el.value = data[i] ? (data[i][col]||'') : '';
+        });
+      }
+    }catch(e){}
+  }
+
+  // attach listeners
+  document.addEventListener('input', function(e){
+    if(e.target && (e.target.matches('input[data-col="lcm1"]') || e.target.matches('input[data-col="lcm2"]'))){
+      computeAll();
+      saveState();
+    }
+  });
+
+  // clear button behavior (single clear)
+  const clearBtn = document.getElementById('clear');
+  if(clearBtn){
+    clearBtn.addEventListener('click', function(){
+      if(!confirm('Clear all values?')) return;
+      document.querySelectorAll('input[data-col="lcm1"], input[data-col="lcm2"]').forEach(i=>i.value='');
+      document.querySelectorAll('.lcm1Total, .lcm2Total, .overall, .total-box').forEach(s=>s.textContent='');
+      localStorage.removeItem(STORAGE_KEY);
+    });
+  }
+
+  // on load restore and compute
+  document.addEventListener('DOMContentLoaded', function(){
+    restoreState();
+    computeAll();
+  });
+
+})(); 
+</script>
+
+</body>
+</html>
+
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Laser Final Report</title>
+<style>
+:root{--bg:#f8fafc;--card:#ffffff;--accent:#2b8cff;--muted:#6b7280;--danger:#ef4444;}
+body{margin:0;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial;background:var(--bg);padding:18px;color:#111827;}
+.container{max-width:1100px;margin:0 auto;}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;}
+h1{font-size:20px;margin:0}
+.card{background:var(--card);border-radius:10px;padding:14px;box-shadow:0 6px 20px rgba(20,30,60,0.04);}
+table{width:100%;border-collapse:collapse;margin-top:6px;}
+thead th{background:#e5e7eb;font-weight:700;padding:10px 6px;border:1px solid #d1d5db;text-align:center;}
+tbody td, tfoot td{padding:8px 6px;text-align:center;border-bottom:1px solid #eef2ff;}
+tfoot td{border-top:2px solid #d1d5db;font-weight:600;}
+input[type=number], input[type=text], select{width:100%;padding:6px 8px;border-radius:6px;border:1px solid #dbeafe;text-align:center;font-size:14px;background:white;}
+input[readonly]{background:#f3f4f6;}
+.total-box{border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;padding:6px 8px;font-weight:700;min-width:60px;display:inline-block;text-align:center;}
+.small{font-size:13px;padding:6px 10px}
+button{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:600;}
+button.secondary{background:var(--accent);color:#fff;border:1px solid #2b8cff;}
+.flex-row{display:flex;justify-content:space-between;gap:10px;margin-top:6px;}
+.flex-row label{flex:1;display:flex;align-items:center;justify-content:space-between;}
+.flex-row input, .flex-row select{width:100px;}
+.section-title{margin-top:14px;font-weight:600;}
+.center-row{text-align:center;margin-top:10px;font-weight:600;}
+.center-row input{width:150px;font-weight:700;}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    
+    
+  </header>
+
+  <div class="card">
+    <table id="main-table" role="table">
+      <thead>
+        <tr>
+          <th>Hour</th>
+          <th>Module (LCM1/LCM2)</th>
+          <th>NG</th>
+          <th>Total LCM1/LCM2</th>
+        </tr>
+      </thead>
+      <tbody id="hourly-rows"></tbody>
+      <tfoot>
+        <tr>
+          <td style="text-align:center;font-weight:700">Total →</td>
+          <td><span id="footer-module" class="total-box"></span></td>
+          <td><span id="footer-ng" class="total-box"></span></td>
+          <td><span id="footer-total" class="total-box"></span></td>
+        </tr>
+        <tr>
+          <td colspan="2" style="text-align:left"><strong>Big Box</strong></td>
+          <td><input type="number" id="bigBox" min="0" step="1" placeholder="Enter big box"></td>
+          <td>
+            <select id="bigBoxDropdown">
+              <option value="">Select</option>
+              <option value="10">10</option>
+              <option value="12">12</option>
+              <option value="14">14</option>
+              <option value="16">16</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="text-align:left"><strong>Small Box</strong></td>
+          <td><input type="number" id="smallBoxManual" min="0" step="1" placeholder="Enter small box"></td>
+          <td>
+            <select id="smallBoxDropdown">
+              <option value="">Select</option>
+              <option value="120">120</option>
+              <option value="130">130</option>
+              <option value="140">140</option>
+              <option value="150">150</option>
+              <option value="160">160</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2" style="text-align:left"><strong>Total Small Box</strong></td>
+          <td colspan="2"><input type="text" id="totalSmallBox" readonly></td>
+        </tr>
+        <tr>
+  <td colspan="2" style="text-align:left"><strong>Full Cell Count</strong></td>
+  <td><input type="text" id="fullCellCount" readonly style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid #dbeafe;text-align:center;background:#f9fafb;font-weight:700;"></td>
+  <td><input type="text" id="fullCellCountDiv72" readonly style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid #dbeafe;text-align:center;background:white;font-weight:700;"></td>
+</tr>
+      </tfoot>
+    </table>
+
+    
+
+    <div style="display:flex;justify-content:center;align-items:center;text-align:center;font-weight:700;margin-top:14px;"><div style="flex:1;text-align:center;">LCM 1</div><div style="flex:1;text-align:center;">LCM 2</div></div><div id="lcm-section">
+      <div class="flex-row">
+        <label>Box Count = <input type="text" id="lcm1Box" readonly></label>
+        <label>Box Count = <input type="text" id="lcm2Box" readonly></label>
+      </div>
+      <div class="flex-row">
+        <label>Good cell = <input type="text" id="lcm1Good" readonly></label>
+        <label>Good cell = <input type="text" id="lcm2Good" readonly></label>
+      </div>
+      <div class="flex-row">
+        <label>module count = <input type="text" id="lcm1Mod" readonly></label>
+        <label>module count = <input type="text" id="lcm2Mod" readonly></label>
+      </div>
+      <div class="flex-row">
+        <label>Broken = <input type="text" id="lcm1Broken" readonly></label>
+        <label>Broken = <input type="text" id="lcm2Broken" readonly></label>
+      </div>
+      <div class="flex-row">
+        <label>NG% = <input type="text" id="lcm1Ngp" readonly></label>
+        <label>NG% = <input type="text" id="lcm2Ngp" readonly></label>
+      </div>
+      <div class="center-row">
+        Total Module Count = <input type="text" id="totalMod" readonly>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const HOURS = 8;
+  const tbody = document.getElementById('hourly-rows');
+  for(let i=0;i<HOURS;i++){
+    tbody.insertAdjacentHTML('beforeend', `
+      <tr>
+        <td>${i+1}</td>
+        <td><input type="text" data-row="${i}" data-col="module" placeholder="e.g. 32/20"></td>
+        <td><input type="number" data-row="${i}" data-col="ng" min="0" step="1"></td>
+        <td><span class="total-box row-total" data-row="${i}"></span></td>
+      </tr>`);
+  }
+
+  function parseModule(str){if(!str) return [0,0];const[a,b]=String(str).split('/').map(s=>parseFloat(s.trim())||0);return[a,b];}
+  function roundDownTwo(n){return Math.floor(n*100)/100;}
+
+  function computeAll(){
+    let sumA=0,sumB=0,sumNG=0,sumTotal=0;
+    for(let i=0;i<HOURS;i++){
+      const modEl=document.querySelector(`input[data-row="${i}"][data-col="module"]`);
+      const ngEl=document.querySelector(`input[data-row="${i}"][data-col="ng"]`);
+      const rowTotalEl=document.querySelector(`.row-total[data-row="${i}"]`);
+      const[a,b]=parseModule(modEl.value);
+      const ng=parseInt(ngEl.value)||0;
+      const total=a+b;
+      rowTotalEl.textContent=total?total:'';
+      sumA+=a;sumB+=b;sumNG+=ng;sumTotal+=total;
+    }
+    document.getElementById('footer-module').textContent=(sumA||sumB)?`${sumA} / ${sumB}`:'';
+    document.getElementById('footer-ng').textContent=sumNG?sumNG:'';
+    document.getElementById('footer-total').textContent=sumTotal?sumTotal:'';
+    computeExtra(sumA,sumB,sumNG);
+    saveState();
+  }
+
+  function computeExtra(sumA,sumB,sumNG){
+    const bigBox=parseFloat(document.getElementById('bigBox').value)||0;
+    const bigBoxDrop=parseFloat(document.getElementById('bigBoxDropdown').value)||0;
+    const smallBox=parseFloat(document.getElementById('smallBoxManual').value)||0;
+    const smallBoxDrop=parseFloat(document.getElementById('smallBoxDropdown').value)||0;
+
+    const totalSmallBox=(bigBox*bigBoxDrop)+smallBox;
+    document.getElementById('totalSmallBox').value=totalSmallBox?totalSmallBox:'';
+
+    const fcVal = totalSmallBox*smallBoxDrop?totalSmallBox*smallBoxDrop:'';
+    document.getElementById('fullCellCount').value = fcVal;
+    document.getElementById('fullCellCountDiv72').value = fcVal ? (fcVal/72).toFixed(2) : '';
+    if(sumA+sumB===0)return;
+
+    const lcm1Box=Math.round((sumA * 72) / smallBoxDrop);
+    const lcm2Box=totalSmallBox-lcm1Box;
+
+    const lcm1Broken=Math.round((sumNG*(sumA/(sumA+sumB)))||0);
+    const lcm2Broken=Math.round((sumNG*(sumB/(sumA+sumB)))||0);
+
+    const lcm1Good=(lcm1Box*smallBoxDrop)-lcm1Broken;
+    const lcm2Good=(lcm2Box*smallBoxDrop)-lcm2Broken;
+
+    const lcm1Mod=lcm1Good/72;
+    const lcm2Mod=lcm2Good/72;
+    const totalMod=lcm1Mod+lcm2Mod;
+
+    const lcm1Ngp=roundDownTwo((lcm1Broken/(lcm1Box*smallBoxDrop))*100||0);
+    const lcm2Ngp=roundDownTwo((lcm2Broken/(lcm2Box*smallBoxDrop))*100||0);
+
+    document.getElementById('lcm1Box').value=lcm1Box;
+    document.getElementById('lcm2Box').value=Math.round(lcm2Box);
+    document.getElementById('lcm1Broken').value=lcm1Broken;
+    document.getElementById('lcm2Broken').value=lcm2Broken;
+    document.getElementById('lcm1Good').value=Math.round(lcm1Good);
+    document.getElementById('lcm2Good').value=Math.round(lcm2Good);
+    document.getElementById('lcm1Mod').value=lcm1Mod.toFixed(2);
+    document.getElementById('lcm2Mod').value=lcm2Mod.toFixed(2);
+    document.getElementById('lcm1Ngp').value=lcm1Ngp.toFixed(2)+'%';
+    document.getElementById('lcm2Ngp').value=lcm2Ngp.toFixed(2)+'%';
+    document.getElementById('totalMod').value=totalMod.toFixed(2);
+  }
+
+  function saveState(){
+    const data={rows:[],bigBox:'',bigBoxDropdown:'',smallBoxManual:'',smallBoxDropdown:''};
+    for(let i=0;i<HOURS;i++){
+      const mod=document.querySelector(`input[data-row="${i}"][data-col="module"]`).value||'';
+      const ng=document.querySelector(`input[data-row="${i}"][data-col="ng"]`).value||'';
+      data.rows.push({module:mod,ng:ng});
+    }
+    data.bigBox=document.getElementById('bigBox').value||'';
+    data.bigBoxDropdown=document.getElementById('bigBoxDropdown').value||'';
+    data.smallBoxManual=document.getElementById('smallBoxManual').value||'';
+    data.smallBoxDropdown=document.getElementById('smallBoxDropdown').value||'';
+    localStorage.setItem('laser_final_v6',JSON.stringify(data));
+  }
+
+  function restoreState(){
+    const raw=localStorage.getItem('laser_final_v6');
+    if(!raw)return;
+    try{
+      const data=JSON.parse(raw);
+      data.rows.forEach((r,i)=>{
+        if(i<HOURS){
+          document.querySelector(`input[data-row="${i}"][data-col="module"]`).value=r.module;
+          document.querySelector(`input[data-row="${i}"][data-col="ng"]`).value=r.ng;
+        }
+      });
+      document.getElementById('bigBox').value=data.bigBox||'';
+      document.getElementById('bigBoxDropdown').value=data.bigBoxDropdown||'';
+      document.getElementById('smallBoxManual').value=data.smallBoxManual||'';
+      document.getElementById('smallBoxDropdown').value=data.smallBoxDropdown||'';
+    }catch{}
+  }
+
+  document.addEventListener('input',e=>{if(e.target.matches('input, select'))computeAll();});
+  document.getElementById('clear').addEventListener('click',()=>{
+    if(!confirm('Clear all values?'))return;
+    document.querySelectorAll('input, select').forEach(i=>i.value='');
+    document.querySelectorAll('.row-total, .total-box').forEach(s=>s.textContent='');
+    localStorage.removeItem('laser_final_v6');
+  });
+
+  restoreState();
+  computeAll();
+})();
+
+// attach live listeners for lcm1 and lcm2 inputs and run compute on load
+document.addEventListener('DOMContentLoaded', function(){
+  document.querySelectorAll('input[data-col="lcm1"], input[data-col="lcm2"]').forEach(inp=>{
+    inp.removeEventListener('input', computeAll);
+    inp.addEventListener('input', computeAll);
+  });
+  // restore state if function exists
+  if(typeof restore === 'function') try{ restore(); }catch(e){}
+  try{ computeAll(); }catch(e){}
+});
+</script>
+</body>
+</html>
+
